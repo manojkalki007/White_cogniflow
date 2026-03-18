@@ -1,0 +1,155 @@
+// Prisma Schema — AI Telephony SaaS
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// User / Auth
+// ─────────────────────────────────────────────
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String
+  passwordHash   String
+  role           Role     @default(ADMIN)
+  organizationId String
+
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  campaigns      Campaign[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  VIEWER
+}
+
+// ─────────────────────────────────────────────
+// Organization (white-label tenant)
+// ─────────────────────────────────────────────
+model Organization {
+  id       String @id @default(cuid())
+  name     String
+  slug     String @unique
+
+  users      User[]
+  campaigns  Campaign[]
+  contacts   Contact[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────
+// Contact
+// ─────────────────────────────────────────────
+model Contact {
+  id             String  @id @default(cuid())
+  organizationId String
+  phoneNumber    String
+  name           String?
+  email          String?
+  metadata       Json?   // arbitrary CSV columns stored as JSON
+
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  callLogs       CallLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([phoneNumber])
+}
+
+// ─────────────────────────────────────────────
+// Campaign
+// ─────────────────────────────────────────────
+model Campaign {
+  id              String         @id @default(cuid())
+  organizationId  String
+  createdById     String
+  name            String
+  smallestAgentId String         // Smallest.ai Agent ID
+  status          CampaignStatus @default(PENDING)
+  scheduledStart  DateTime?
+  scheduledEnd    DateTime?
+  activeHoursFrom String?        // e.g. "09:00"
+  activeHoursTo   String?        // e.g. "18:00"
+  timeZone        String         @default("UTC")
+
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  createdBy       User         @relation(fields: [createdById], references: [id])
+  callLogs        CallLog[]
+
+  totalContacts   Int @default(0)
+  processedCount  Int @default(0)
+  failedCount     Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+enum CampaignStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  PAUSED
+  FAILED
+}
+
+// ─────────────────────────────────────────────
+// CallLog
+// ─────────────────────────────────────────────
+model CallLog {
+  id                  String     @id @default(cuid())
+  campaignId          String
+  contactId           String
+  smallestAiCallId    String?    @unique   // returned by Smallest.ai /v1/calls
+  status              CallStatus @default(PENDING)
+  direction           String     @default("outbound")
+  duration            Int?       // seconds
+  transcript          String?    @db.Text
+  recordingUrl        String?
+  disconnectReason    String?
+  postCallMetrics     Json?      // structured metrics from webhook
+  rawWebhookPayload   Json?      // full webhook body stored for debugging
+
+  campaign  Campaign @relation(fields: [campaignId], references: [id])
+  contact   Contact  @relation(fields: [contactId], references: [id])
+
+  startedAt   DateTime?
+  endedAt     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([campaignId])
+  @@index([contactId])
+  @@index([smallestAiCallId])
+  @@index([status])
+}
+
+enum CallStatus {
+  PENDING
+  INITIATED
+  RINGING
+  IN_CALL
+  COMPLETED
+  FAILED
+  NO_ANSWER
+  BUSY
+}
